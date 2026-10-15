@@ -224,7 +224,7 @@ int main(void)
         touch("/dev/dfm6");
         if (soft_reboot) {
             while (late_load_running()) sleep(1);
-            run_ctx(NULL, (char *[]){ KSUD, "soft-reboot", NULL });
+            run_ctx("u:r:ksu:s0", (char *[]){ KSUD, "soft-reboot", NULL });
         }
     } else {
         touch("/dev/dfme2");
