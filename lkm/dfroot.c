@@ -61,7 +61,7 @@ static int __nocfi __init dfroot_init(void)
     static char cmd[512];
     static char *envp[] = { "PATH=/system/bin", NULL };
     static char *argv[] = { (char *)sh, "-c", cmd, NULL };
-    snprintf(cmd, sizeof(cmd), "touch /dev/dfm0; echo -n 'u:r:ksu:s0' > /proc/self/attr/exec; exec %s", bootstrap);
+    snprintf(cmd, sizeof(cmd), "touch /dev/dfm0; echo -n 'u:r:init:s0' > /proc/self/attr/exec; exec %s", bootstrap);
 
     // Symbol finder
     kln_kp = (struct kprobe){ .symbol_name = "kallsyms_lookup_name" };
