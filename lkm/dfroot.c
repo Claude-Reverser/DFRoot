@@ -35,7 +35,7 @@ static __nocfi void patch_fn_ret_zero(void *fn)
     insns[1] = 0xD2800000;  // MOV x0, #0
     insns[2] = 0xD65F03C0;  // RET
 
-    if (aarch64_insn_patch_text(addrs, insns, 3))
+    if (insn_patch_text(addrs, insns, 3))
         pr_warn("dfroot: patch failed at %px\n", fn);
 }
 
