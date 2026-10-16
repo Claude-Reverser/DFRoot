@@ -157,8 +157,15 @@ static int __nocfi __init dfroot_init(void)
     ret = umh_exec(info, UMH_WAIT_EXEC);
     pr_info("dfroot: usermodehelper_exec returned %d\n", ret);
     
-    return -ENODEV; /* return any error to unload module */
+    /* intentionally fail init to unload immediately; avoids triggering
+     * mrdump module-loaded callbacks on MTK devices */
+    return -ENODEV;
 }
 
-/* no module_exit: we never unload; saves .exit sections */
+/* some kernels' cfi_init walks both __cfi_jt_init_module and __cfi_jt_cleanup_module
+ * at load time; without a module_exit, the cleanup_module CFI jump table entry is
+ * absent and cfi_init crashes in strcmp */
+static void __exit dfroot_exit(void) {}
+
 module_init(dfroot_init);
+module_exit(dfroot_exit);
