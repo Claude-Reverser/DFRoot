@@ -14,7 +14,14 @@ all:
 		ARCH=arm64 \
 		LLVM=1 \
 		modules
-	$(OBJCOPY) --remove-section=.kcfi_traps dfroot.ko
+	$(OBJCOPY) --strip-unneeded \
+	           -R .comment -R .note.gnu.property \
+	           -R .note.Linux -R .note.GNU-stack \
+	           -R .BTF -R .BTF.base -R .llvm_addrsig \
+	           -R .hyp.text -R .hyp.bss -R .hyp.rodata -R .hyp.event_ids \
+	           -R .hyp.patchable_function_entries -R .hyp.data \
+	           -R .kcfi_traps \
+	           dfroot.ko
 
 clean:
 	$(MAKE) -C $(KDIR) M=$(CURDIR) \
