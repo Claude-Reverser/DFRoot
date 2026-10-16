@@ -4,8 +4,6 @@
 #include <linux/kprobes.h>
 #include <linux/module.h>
 #include <linux/namei.h>
-#include <linux/ptrace.h>
-#include <linux/slab.h>
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("DFRoot LKM");
 
