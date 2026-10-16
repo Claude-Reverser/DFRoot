@@ -3,7 +3,8 @@ obj-m += dfroot.o
 # Size diet: this ko is written through the exploit page by page,
 # so every byte counts. -Os shrinks code; dropping unwind tables kills
 # .eh_frame (unused for modules).
-CFLAGS_dfroot.o := -Os -fno-asynchronous-unwind-tables -fno-unwind-tables
+CFLAGS_dfroot.o := -Os -Qn -fno-addrsig -fno-asynchronous-unwind-tables \
+                   -fno-unwind-tables -fno-sanitize=cfi,kcfi
 
 all:
 	$(MAKE) -C $(KDIR) M=$(CURDIR) \
