@@ -7,15 +7,17 @@
 #include <assert.h>
 #include <stdarg.h>
 
-static char last_error[1024];
+static char last_error[4096];
 
 int __android_log_print(int priority, const char *tag, const char *format, ...)
 {
     (void)tag;
     va_list args;
     va_start(args, format);
-    if (priority == ANDROID_LOG_ERROR)
-        vsnprintf(last_error, sizeof(last_error), format, args);
+    if (priority == ANDROID_LOG_ERROR) {
+        size_t used = strlen(last_error);
+        vsnprintf(last_error + used, sizeof(last_error) - used, format, args);
+    }
     va_end(args);
     return 0;
 }
@@ -53,6 +55,31 @@ int main(void)
     assert(stat(marker, &st) == 0 && S_ISREG(st.st_mode));
     assert(disable_modules(modules) == 0); /* Existing markers are accepted. */
     assert(unlink(marker) == 0);
+
+    /* Directory links are never traversed; linked/FIFO markers fail closed. */
+    char outside[512], link_path[512];
+    path_join(outside, sizeof(outside), root, "outside");
+    path_join(link_path, sizeof(link_path), modules, "linked-module");
+    assert(mkdir(outside, 0700) == 0);
+    assert(symlink(outside, link_path) == 0);
+    assert(disable_modules(modules) == 0);
+    char outside_marker[512];
+    path_join(outside_marker, sizeof(outside_marker), outside, "disable");
+    assert(access(outside_marker, F_OK) < 0 && errno == ENOENT);
+    assert(unlink(link_path) == 0);
+    assert(unlink(marker) == 0);
+    assert(symlink(outside_marker, marker) == 0);
+    assert(disable_modules(modules) == -1);
+    assert(access(outside_marker, F_OK) < 0 && errno == ENOENT);
+    assert(unlink(marker) == 0);
+    assert(mkfifo(marker, 0600) == 0);
+    assert(disable_modules(modules) == -1); /* Must not block waiting for a reader. */
+    int reader = open(marker, O_RDONLY | O_NONBLOCK);
+    assert(reader >= 0);
+    assert(disable_modules(modules) == -1); /* Also reject an already-open FIFO. */
+    assert(close(reader) == 0);
+    assert(unlink(marker) == 0);
+    assert(rmdir(outside) == 0);
 
     /* Failed marker creation must stop startup and retain the specific error. */
     assert(chmod(module, 0500) == 0);

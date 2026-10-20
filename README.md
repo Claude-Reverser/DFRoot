@@ -11,24 +11,55 @@ DFRoot is an Android rooting tool that exploits CVE-2026-43284 (DirtyFrag) — a
 
 ## FAQ
 
-**Q: Log says patching failed and that my device isn't vulnerable**
+**Q: Log says patching failed**
 
-A: Sorry, there is no fix. Either:
-  - Your device's kernel is too new
-  - Your device manufacturer backported the official mitigation
+A: A patch failure alone does not establish the cause. Save the complete log and check the preceding errors. Kernel mitigations can prevent the exploit, including:
+
+  - A newer kernel containing the official mitigation
+  - A manufacturer backport of the official mitigation
   - [Accidental mitigation](https://github.com/V4bel/dirtyfrag/issues/23#issuecomment-4405314290) (typically seen on kernel 6.1)
 
-**Q: Log says "SUCCESS" or "ksud exited with error", but I don't have root**
+**Q: The launcher returned successfully, but I don't have root**
 
-A: First, try disabling "Auto Soft Reboot" in DFRoot settings if you have it enabled, otherwise https://github.com/diabl0w/DFRoot/discussions/69
+A: A successful launcher exit means the launch command returned zero; it does not verify usable root. Older versions called this "SUCCESS". Check the selected SU manager's status. Turn off **Auto Soft Reboot** while investigating and save the logs before another attempt. See also [the troubleshooting discussion](https://github.com/diabl0w/DFRoot/discussions/69).
+
+**Q: The log says the previous attempt's outcome is unknown**
+
+A: DFRoot found an unfinished run record after the app process stopped. A reboot, process termination, or another interruption may leave such a record. It does not identify a kernel panic or prove root is available. Save the logs and collect additional diagnostics below.
 
 **Q: I installed a module and now I can't launch root without crashing**
 
-A: Toggle "Disable KSU Modules" in DFRoot settings
+A: Enable **Disable KSU Modules** before the next run. DFRoot will mark installed modules disabled before launching the SU daemon, and stop startup if a module cannot be disabled. This may help with a broken module; it does not prevent failures earlier in startup or establish the cause of a crash.
 
 **Q: I installed a module and have "Start at Boot" enabled and now I am bootlooping**
 
-A: Typically Android will detect bootloops and boot you into Safe Mode, otherwise you can usually hold the Volume Down button during boot to enter safe mode. From there, disable "Start on Boot" and enable "Disable KSU Modules" in DFRoot settings or just uninstall DFRoot until you stabilize.
+A: Follow your device manufacturer's instructions for entering Safe Mode. If you can open DFRoot in normal mode, turn off **Start at Boot** before further testing. Downloaded apps may be unavailable in Safe Mode; use Android Settings to uninstall DFRoot if needed to stop automatic startup. Uninstalling also removes its saved logs. Restore stable startup before trying again. **Start at Boot** is disabled by default.
+
+## Saving and collecting logs
+
+DFRoot keeps the current and previous run in private, device-protected storage, including manual and boot attempts. Open the app and choose **Save logs** to export a text snapshot through Android's file picker. The export includes the saved app output and available native bootstrap logs. It needs neither root nor storage permission.
+
+A foreground service owns active runs independently of the app screen. If notifications are disabled, Android may show the running service only in Task Manager instead of the notification drawer. Interrupted work is not automatically restarted. **Start at Boot** makes at most one automatic attempt per boot, with a wake lock capped at two minutes; unlocking does not retry a failed attempt.
+
+App output is limited to 128 KiB per run and bootstrap output to 64 KiB per run. Save the failed run before further attempts rotate it out. Startup stops before native work if it cannot prepare separate logs for the new attempt, preserving the previous record. Later logging failures are reported without aborting native execution or cleanup. A force-stop or abrupt reset can leave the final messages unwritten; an incomplete record is reported as an unknown outcome, not a diagnosis of the interruption.
+
+For additional diagnostics, connect a computer with Python 3 and ADB, enable USB debugging, and authorize the computer. Capture the available DFRoot logcat messages and device metadata:
+
+```sh
+python3 tools/collect_logs.py --serial DEVICE --output dfroot-logs
+```
+
+To capture messages while reproducing a problem, start a timed capture first, then run DFRoot yourself:
+
+```sh
+python3 tools/collect_logs.py --serial DEVICE --watch --duration 120 --output dfroot-watch
+```
+
+Replace `DEVICE` with the serial shown by `adb devices`. Use `--adb PATH` if ADB is not on your PATH. Each capture creates a local session directory under `--output` (default: `out/diagnostics`). Stop a watch early with Ctrl+C to keep the partial capture.
+
+The default capture filters logcat to DFRoot's tag and includes selected version and boot metadata. On a device with working root, add `--root` to request current `dmesg`, available pstore/last-kmsg records, and saved private app logs. Unavailable or denied sources are recorded as collection failures; their absence does not rule out a kernel panic.
+
+The collector reads diagnostics without clearing logs, changing settings, rebooting, or starting DFRoot. It does not upload anything. Review the files for personal information before sharing them, and include the selected SU manager/version, DFRoot settings, and steps that led to the failure.
 
 ## Usage
 
@@ -48,11 +79,12 @@ A: Typically Android will detect bootloops and boot you into Safe Mode, otherwis
 
 ## Features
 
-- Start on Boot
-- Automatic soft reboot (if `late-load --soft-reboot` supported by your SU Manager)
+- Optional Start at Boot, disabled by default
+- Optional soft reboot when supported by your SU Manager
 - RO Partition Protection
-- Disable all KernelSU modules, to recover from a broken one
-- Shizuku not needed — regain root without WiFi!
+- Disable KernelSU modules before daemon launch to help recover from a broken module
+- Saved run logs and export through Android's file picker
+- No Shizuku or Wi-Fi connection required
 
 ## How it works
 

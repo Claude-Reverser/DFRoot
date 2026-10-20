@@ -33,6 +33,26 @@
 
     </LinearLayout>
 
+    <ProgressBar
+        android:id="@+id/runProgress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:indeterminate="true"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/statusView"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:paddingTop="8dp"
+        android:text="@string/loading_saved_logs"
+        android:textSize="16sp"
+        android:textColor="?android:attr/textColorPrimary"
+        android:accessibilityLiveRegion="polite" />
+
     <ScrollView
         android:id="@+id/outputScroll"
         android:layout_width="match_parent"
@@ -48,7 +68,7 @@
             android:layout_height="wrap_content"
             android:fontFamily="monospace"
             android:textIsSelectable="true"
-            android:textSize="11sp"
+            android:textSize="13sp"
             android:textColor="?android:attr/textColorPrimary" />
 
     </ScrollView>

