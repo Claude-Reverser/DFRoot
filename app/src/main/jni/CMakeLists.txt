@@ -50,6 +50,7 @@ target_link_libraries(dfroot log)
 target_link_options(dfroot PRIVATE -Wl,-z,max-page-size=16384)
 
 add_executable(bootstrap bootstrap.c)
+target_link_libraries(bootstrap log)
 set_target_properties(bootstrap PROPERTIES
     PREFIX "lib"
     SUFFIX ".so"

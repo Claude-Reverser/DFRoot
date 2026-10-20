@@ -1,5 +1,8 @@
+#include <android/log.h>
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -175,22 +178,69 @@ static void touch(const char *path)
 
 /* Mark every installed module disabled before ksud runs. A broken module
  * otherwise loads on the next boot and bootloops the device. */
-static int disable_modules(void)
+static int disable_modules(const char *modules_dir)
 {
-    DIR *dir = opendir(MODULES_DIR);
-    if (!dir)
+    DIR *dir = opendir(modules_dir);
+    if (!dir) {
+        int error = errno;
+        if (error == ENOENT) {
+            __android_log_print(ANDROID_LOG_INFO, "dfroot",
+                    "bootstrap: %s does not exist; no modules to disable", modules_dir);
+            return 0;
+        }
+        __android_log_print(ANDROID_LOG_ERROR, "dfroot",
+                "bootstrap: cannot open %s: %s (%d)", modules_dir, strerror(error), error);
         return -1;
+    }
 
     struct dirent *ent;
-    while ((ent = readdir(dir))) {
+    int result = 0;
+    for (;;) {
+        errno = 0;
+        ent = readdir(dir);
+        if (!ent) {
+            int error = errno;
+            if (error) {
+                __android_log_print(ANDROID_LOG_ERROR, "dfroot",
+                        "bootstrap: cannot read %s: %s (%d)", modules_dir, strerror(error), error);
+                result = -1;
+            }
+            break;
+        }
         if (ent->d_name[0] == '.')
             continue;
-        char path[256];
-        snprintf(path, sizeof(path), MODULES_DIR "/%s/disable", ent->d_name);
-        touch(path);
+
+        struct stat st;
+        if (fstatat(dirfd(dir), ent->d_name, &st, 0) < 0) {
+            int error = errno;
+            __android_log_print(ANDROID_LOG_ERROR, "dfroot",
+                    "bootstrap: cannot inspect %s/%s: %s (%d)",
+                    modules_dir, ent->d_name, strerror(error), error);
+            result = -1;
+            break;
+        }
+        if (!S_ISDIR(st.st_mode))
+            continue;
+
+        char path[NAME_MAX + sizeof("/disable")];
+        int length = snprintf(path, sizeof(path), "%s/disable", ent->d_name);
+        int fd = -1;
+        if (length < 0 || (size_t)length >= sizeof(path))
+            errno = ENAMETOOLONG;
+        else
+            fd = openat(dirfd(dir), path, O_CREAT | O_WRONLY | O_CLOEXEC, 0666);
+        if (fd < 0) {
+            int error = errno;
+            __android_log_print(ANDROID_LOG_ERROR, "dfroot",
+                    "bootstrap: cannot disable %s/%s: %s (%d)",
+                    modules_dir, ent->d_name, strerror(error), error);
+            result = -1;
+            break;
+        }
+        close(fd);
     }
     closedir(dir);
-    return 0;
+    return result;
 }
 
 int main(void)
@@ -213,7 +263,7 @@ int main(void)
 
     if (disable_mods) {
         touch("/dev/dfm4");
-        if (disable_modules()) {
+        if (disable_modules(MODULES_DIR)) {
             touch("/dev/dfme1");
             return 1;
         }
